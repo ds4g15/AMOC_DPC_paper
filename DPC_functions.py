@@ -4,6 +4,7 @@ import numpy as np
 import xarray as xr
 import xmitgcm as xm
 import cartopy.feature
+import pyresample as pr
 import ecco_v4_py as ecco
 import cartopy.crs as ccrs
 import matplotlib.pyplot as plt
@@ -146,8 +147,11 @@ def atl_map(lon,lat,F,ax=plt.gca(),**kwargs):
     p=AX.pcolormesh(lonc,latc,FR,transform=ccrs.PlateCarree(),zorder=-1,**kwargs)
     AX.coastlines(zorder=0,color='k')
     AX.add_feature(cartopy.feature.LAND, color='k')
-    AX.set_xlim(np.array(AX.get_xlim())*0.85)
-    AX.set_ylim(np.array(AX.get_ylim())*0.85)
+    # AX.set_xlim(np.array(AX.get_xlim())*0.85)
+    # AX.set_ylim(np.array(AX.get_ylim())*0.85)
+
+    AX.set_xlim((-6464177.057381174, 6352453.523741399))
+    AX.set_ylim((-4354122.528486568, 8221529.553090038))    
     
     return p,AX
 
@@ -211,9 +215,13 @@ def atlstream(F,ax=plt.gca(),widthfactor=1,ss=1,vmin=None,vmax=None,**kwargs):
     AX.add_feature(cartopy.feature.LAND, color='k',zorder=-1)
     # AX.set_xlim(np.array(AX.get_xlim())*0.85)
     # AX.set_ylim(np.array(AX.get_ylim())*0.85)    
+    
+    
     # print(AX.get_xlim(),AX.get_ylim())    
     AX.set_xlim((-6464177.057381174, 6352453.523741399))
     AX.set_ylim((-4354122.528486568, 8221529.553090038))
+    # AX.set_xlim(np.array(AX.get_xlim())*0.85)
+    # AX.set_ylim(np.array(AX.get_ylim())*0.85)    
     return s,AX
 
 def get_ecco_forcing(variable_name,forcing_dir=None,nsteps_mean=1,calc_clim=True,show_progress=False,):
@@ -452,3 +460,54 @@ def remove_forcing_pattern(PATTERN,PATTERN_ts,forcing_component,input_dir=None,o
     print('done! '+str(time.time()-T0))
     if return_original_forcing:
         return F_clim,F_anom_og,F_anom
+
+
+def interp_to_latlon_timevarying(lons,lats,F,nk=1):
+    """
+    Interpolate a (NT,13,90,90) field onto a grid spanning [-30,75]N, [-100,30]E
+    with 1 degree resolution.
+    """
+    latmin=-30
+    latmax=75
+    deltalat=1
+    lonmin=-100
+    lonmax=30
+    deltalon=1
+
+
+    olats1d=lats.ravel()
+    olons1d=lons.ravel()
+    if nk==1:
+        orig_field=F.transpose(1,2,3,0).reshape(13*90*90,-1)
+    else:
+        nt=F.shape[0]
+        orig_field=F.transpose(2,3,4,0,1).reshape(13*90*90,nt*nk)
+    orig_grid=pr.geometry.SwathDefinition(lats=olats1d,lons=olons1d)
+
+
+    late1 =\
+        np.arange(latmin,latmax+deltalat,deltalat)
+
+    lone1 =\
+        np.arange(lonmin,lonmax+deltalon,deltalon)
+
+    latc1 = (late1[0:-1] + late1[1:])/2
+    lonc1 = (lone1[0:-1] + lone1[1:])/2
+
+    lone, late =\
+        np.meshgrid(lone1, late1)
+
+    lonc, latc =\
+        np.meshgrid(lonc1, latc1)
+
+    new_grid  = pr.geometry.GridDefinition(lons=lonc,
+                                           lats=latc)
+
+    F_interp= \
+        pr.kd_tree.resample_nearest(orig_grid, orig_field, new_grid,
+                                    radius_of_influence=112000,
+                                    fill_value=None)
+    if nk>1:
+        F_interp=F_interp.reshape(len(latc1),len(lonc1),nt,nk).transpose(2,3,1,0)
+    else: F_interp=F_interp.transpose(2,1,0)
+    return lonc1,latc1,F_interp
